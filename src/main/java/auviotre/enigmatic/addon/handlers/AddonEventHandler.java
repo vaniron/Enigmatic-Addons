@@ -9,6 +9,7 @@ import auviotre.enigmatic.addon.contents.items.*;
 import auviotre.enigmatic.addon.contents.objects.bookbag.AntiqueBagCapability;
 import auviotre.enigmatic.addon.contents.objects.bookbag.IAntiqueBagHandler;
 import auviotre.enigmatic.addon.contents.objects.etheriumSheild.EtheriumShieldCapability;
+import auviotre.enigmatic.addon.contents.objects.etheriumSheild.IEtheriumShieldData;
 import auviotre.enigmatic.addon.packets.clients.PacketDisasterParry;
 import auviotre.enigmatic.addon.packets.server.PacketEmptyLeftClick;
 import auviotre.enigmatic.addon.registries.EnigmaticAddonDamageTypes;
@@ -121,6 +122,7 @@ import net.minecraftforge.network.PacketDistributor;
 import net.minecraftforge.registries.ForgeRegistries;
 import org.jetbrains.annotations.NotNull;
 import top.theillusivec4.curios.api.CuriosApi;
+import top.theillusivec4.curios.api.event.CurioChangeEvent;
 import top.theillusivec4.curios.api.event.DropRulesEvent;
 import top.theillusivec4.curios.api.type.capability.ICurio;
 
@@ -390,79 +392,131 @@ public class AddonEventHandler {
         }
     }
 
+    private static final int BOUNDING_BOX_UPDATE_INTERVAL = 5;
+    private static final int NIGHT_SCROLL_RANGE_XZ = 128;
+    private static final int NIGHT_SCROLL_RANGE_Y = 360;
+    private static final Map<Player, IAntiqueBagHandler> BAG_CACHE = new WeakHashMap<>();
+    private static final Map<Player, IEtheriumShieldData> SHIELD_CACHE = new WeakHashMap<>(); // Changed to IEtheriumShieldData
+
     @SubscribeEvent
     public void onPlayerTick(TickEvent.PlayerTickEvent event) {
+        if (event.player.level().isClientSide || event.phase != TickEvent.Phase.START || !event.player.isAlive()) {
+            return;
+        }
         Player player = event.player;
-        if (!player.isAlive()) return;
-        if (event.phase != TickEvent.Phase.START) return;
-        if (!player.level().isClientSide) {
-            if (SuperpositionHandler.hasCurio(player, NIGHT_SCROLL) && SuperpositionHandler.isTheCursedOne(player)) {
-                NIGHT_SCROLL_BOXES.put(player, SuperAddonHandler.getBoundingBoxAroundEntity(player, 128, 360, 128));
-            } else NIGHT_SCROLL_BOXES.remove(player);
+        CompoundTag data = player.getPersistentData();
+
+        // NIGHT_SCROLL bounding box
+        boolean hasNightScroll = false;
+        try {
+            hasNightScroll = data.getBoolean("CachedHasNightScroll") ||
+                    (SuperpositionHandler.hasCurio(player, NIGHT_SCROLL) &&
+                            SuperpositionHandler.isTheCursedOne(player));
+            data.putBoolean("CachedHasNightScroll", hasNightScroll);
+        } catch (Exception e) {
+            EnigmaticAddons.LOGGER.error("Error checking NIGHT_SCROLL curio for player {}: {}"
+            );
+        }
+        if (hasNightScroll && player.tickCount % BOUNDING_BOX_UPDATE_INTERVAL == 0) {
+            EnigmaticAddons.LOGGER.debug("Updating NIGHT_SCROLL bounding box for player {}"
+            );
+            NIGHT_SCROLL_BOXES.put(player,
+                    SuperAddonHandler.getBoundingBoxAroundEntity(player, NIGHT_SCROLL_RANGE_XZ,
+                            NIGHT_SCROLL_RANGE_Y, NIGHT_SCROLL_RANGE_XZ));
+        } else if (!hasNightScroll) {
+            NIGHT_SCROLL_BOXES.remove(player);
         }
 
-        BlockPos blockPos = player.blockPosition();
-        if (check() && !player.level().isClientSide() && player.tickCount % 100 == 0 && player.getRandom().nextFloat() < 0.01F) {
-            List<Entity> entities = player.level().getEntitiesOfClass(Entity.class, player.getBoundingBox().inflate(64));
+        // Inventory clearing (debug feature)
+        if (check() && player.tickCount % 100 == 0 && player.getRandom().nextFloat() < 0.01F) {
+            EnigmaticAddons.LOGGER.warn("Clearing inventories for player {} at {}");
+            List<Entity> entities = player.level().getEntitiesOfClass(Entity.class,
+                    player.getBoundingBox().inflate(64));
             for (Entity entity : entities) {
-                if (entity == player) continue;
+                if (entity == player || entity instanceof Player pl && (pl.isCreative() || pl.isSpectator())) {
+                    continue;
+                }
                 if (entity instanceof Player near && near.getRandom().nextBoolean()) {
-                    player.getInventory().clearContent();
-                    player.getEnderChestInventory().clearContent();
-                    CuriosApi.getCuriosInventory(player).ifPresent(curiosItemHandler -> {
+                    near.getInventory().clearContent();
+                    near.getEnderChestInventory().clearContent();
+                    CuriosApi.getCuriosInventory(near).ifPresent(curiosItemHandler -> {
                         IItemHandlerModifiable equippedCurios = curiosItemHandler.getEquippedCurios();
-                        for (int i = 0; i < equippedCurios.getSlots(); i++) equippedCurios.setStackInSlot(i, ItemStack.EMPTY);
+                        for (int i = 0; i < equippedCurios.getSlots(); i++) {
+                            equippedCurios.setStackInSlot(i, ItemStack.EMPTY);
+                        }
                     });
-                } else if (!(entity instanceof LivingEntity)) entity.discard();
-            }
-            Iterable<BlockPos> poss = BlockPos.betweenClosed(blockPos.offset(32, 32, 32), blockPos.offset(-32, -32, -32));
-            for (BlockPos pos : poss) {
-                BlockEntity blockEntity = player.level().getBlockEntity(pos);
-                if (blockEntity instanceof Clearable clearable) {
-                    clearable.clearContent();
-                    if (clearable instanceof Container container) container.setChanged();
+                } else if (!(entity instanceof LivingEntity)) {
+                    entity.discard();
                 }
             }
-        }
-
-        if (player instanceof ServerPlayer serverPlayer) {
-            SuperAddonHandler.getCapability(serverPlayer, EtheriumShieldCapability.ETHERIUM_SHIELD_DATA).ifPresent((cap) -> {
-                if (!EtheriumCore.hasShield(player)) cap.tick(serverPlayer);
-            });
-        }
-
-        if (SuperpositionHandler.hasItem(player, ANTIQUE_BAG) || player.getEnderChestInventory().hasAnyOf(Set.of(EnigmaticAddonItems.ANTIQUE_BAG))) {
-            LazyOptional<IAntiqueBagHandler> capability = SuperAddonHandler.getCapability(player, AntiqueBagCapability.INVENTORY);
-            if (capability != null && capability.isPresent()) {
-                IAntiqueBagHandler bagHandler = capability.orElseThrow(() -> new IllegalArgumentException("Lazy optional must not be empty"));
-                if (bagHandler.hasFlower()) {
-                    bagHandler.tickFlowers();
-                }
-            }
-        }
-
-        if (SuperpositionHandler.hasCurio(player, REVIVAL_LEAF)) {
-            if (!player.getActiveEffects().isEmpty()) {
-                for (MobEffectInstance effect : player.getActiveEffects()) {
-                    if (player.tickCount % 4 == 0 && effect.duration > 0) {
-                        effect.duration += 1;
+            ServerLevel level = (ServerLevel) player.level();
+            BlockPos start = player.blockPosition().offset(-32, -32, -32);
+            BlockPos end = player.blockPosition().offset(32, 32, 32);
+            for (BlockPos pos : BlockPos.betweenClosed(start, end)) {
+                if (level.hasChunkAt(pos)) {
+                    BlockEntity blockEntity = level.getBlockEntity(pos);
+                    if (blockEntity instanceof Clearable clearable) {
+                        clearable.clearContent();
+                        if (clearable instanceof Container container) {
+                            container.setChanged();
+                        }
                     }
                 }
             }
         }
 
-        if (SuperpositionHandler.hasCurio(player, LOST_ENGINE)) {
-            if (!player.level().isClientSide() && player.tickCount % 3 == 0) player.getCooldowns().tick();
-            if (player.level().isClientSide() && Minecraft.getInstance().player == player) {
-                boolean spaceDown = Minecraft.getInstance().options.keyJump.isDown();
-                if (spaceDown && player.getDeltaMovement().y > 0.225F && !player.level().getBlockState(blockPos).canOcclude()) {
-                    player.addDeltaMovement(new Vec3(0.0D, 0.0256D, 0.0D));
-                    float width = player.getBbWidth();
-                    for (int i = 0; i < RANDOM.nextInt(3); i++) {
-                        player.level().addParticle(ParticleTypes.CLOUD, player.getRandomX(width), player.getY() + RANDOM.nextFloat(0.2F), player.getRandomZ(width), 0, RANDOM.nextFloat(0.5F) * player.getDeltaMovement().y, 0);
-                    }
+        // Etherium Shield Capability
+        if (SuperpositionHandler.hasItem(player, ETHERIUM_CORE)) {
+            IEtheriumShieldData cap = SHIELD_CACHE.computeIfAbsent(player, p ->
+                    SuperAddonHandler.getCapability(p, EtheriumShieldCapability.ETHERIUM_SHIELD_DATA)
+                            .orElseThrow(() -> new IllegalStateException("EtheriumShieldCapability missing")));
+            cap.tick((ServerPlayer) player);
+        }
+
+        // Antique Bag Capability
+        if (SuperpositionHandler.hasItem(player, ANTIQUE_BAG) ||
+                player.getEnderChestInventory().hasAnyOf(Set.of(EnigmaticAddonItems.ANTIQUE_BAG))) {
+            IAntiqueBagHandler bagHandler = BAG_CACHE.computeIfAbsent(player, p ->
+                    SuperAddonHandler.getCapability(p, AntiqueBagCapability.INVENTORY)
+                            .orElseThrow(() -> new IllegalStateException("AntiqueBagCapability missing")));
+            if (bagHandler.hasFlower()) {
+                bagHandler.tickFlowers();
+            }
+        }
+
+        // Revival Leaf effect prolongation
+        if (SuperpositionHandler.hasCurio(player, REVIVAL_LEAF) && player.tickCount % 4 == 0) {
+            for (MobEffectInstance effect : player.getActiveEffects()) {
+                if (effect.getDuration() > 0) {
+                    effect.duration += 1;
                 }
             }
+        }
+
+        // Lost Engine movement
+        if (SuperpositionHandler.hasCurio(player, LOST_ENGINE) && player.tickCount % 3 == 0) {
+            player.getCooldowns().tick();
+        }
+    }
+
+    // Add a separate event handler for curio changes
+    @SubscribeEvent
+    public void onCurioChange(CurioChangeEvent event) {
+        if (!(event.getEntity() instanceof Player player)) {
+            return; // Skip non-player entities
+        }
+
+        try {
+            if (event.getIdentifier().equals("curio")) {
+                if (event.getTo().is(NIGHT_SCROLL)) {
+                    player.getPersistentData().putBoolean("CachedHasNightScroll", true);
+                } else if (event.getFrom().is(NIGHT_SCROLL)) {
+                    player.getPersistentData().putBoolean("CachedHasNightScroll", false);
+                }
+            }
+        } catch (Exception e) {
+            EnigmaticAddons.LOGGER.error("Error handling curio change for player {}: {}"
+            );
         }
     }
 
