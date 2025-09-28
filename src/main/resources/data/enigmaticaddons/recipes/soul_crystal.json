@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "pattern": [
+    "ddd",
+    "dhd",
+    "ddd"
+  ],
+  "key": {
+    "h": {
+      "item": "enigmaticlegacy:earth_heart"
+    },
+    "d": {
+      "item": "minecraft:diamond_block"
+    }
+  },
+  "result": {
+    "item": "enigmaticlegacy:soul_crystal"
+  }
+}
