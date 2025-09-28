@@ -10,6 +10,7 @@ import com.aizistral.omniconfig.wrappers.Omniconfig;
 import com.aizistral.omniconfig.wrappers.OmniconfigWrapper;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.core.NonNullList;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
@@ -50,17 +51,18 @@ public class TotemOfMalice extends ItemBaseCurio implements ICursed {
     }
 
     public static ItemStack getValidTotem(Player player) {
-//        for (NonNullList<ItemStack> stacks : player.getInventory().compartments) {
-//            for (ItemStack itemstack : stacks) {
-//                if (!itemstack.isEmpty() && itemstack.is(EnigmaticAddonItems.TOTEM_OF_MALICE) && isPowerful(itemstack)) {
-//                    return itemstack;
-//                }
-//            }
-//        }
-        for (ItemStack stack : player.getHandSlots()) {
+        for (NonNullList<ItemStack> stacks : player.getInventory().compartments) {
+            for (ItemStack itemstack : stacks) {
+                if (!itemstack.isEmpty() && itemstack.is(EnigmaticAddonItems.TOTEM_OF_MALICE) && isPowerful(itemstack)) {
+                    return itemstack;
+                }
+            }
+        }
+
+        /* for (ItemStack stack : player.getHandSlots()) {
             if (!stack.isEmpty() && stack.is(EnigmaticAddonItems.TOTEM_OF_MALICE) && isPowerful(stack))
                 return stack;
-        }
+        } */
         return ItemStack.EMPTY;
     }
 
