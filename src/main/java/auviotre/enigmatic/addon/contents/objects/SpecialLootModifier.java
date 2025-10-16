@@ -33,14 +33,14 @@ public class SpecialLootModifier extends LootModifier {
             boolean isNether = SuperpositionHandler.getNetherDungeons().stream().anyMatch((table) -> table.equals(context.getQueriedLootTableId()));
             boolean isOver = SuperpositionHandler.getOverworldDungeons().stream().anyMatch((table) -> table.equals(context.getQueriedLootTableId()));
 
-            if (isNether && player.getRandom().nextInt(3) == 0 && !SuperpositionHandler.hasPersistentTag(player, "LootedHellCharm")) {
+            if (isNether && player.getRandom().nextInt(3) == 0) {
                 if (OmniconfigAddonHandler.isItemEnabled(EnigmaticAddonItems.HELL_BLADE_CHARM) && generatedLoot.stream().anyMatch(stack -> stack.is(EnigmaticAddonItems.ICHOR_DROPLET))) {
                     generatedLoot.removeIf(stack -> stack.is(EnigmaticAddonItems.ICHOR_DROPLET));
                     generatedLoot.add(EnigmaticAddonItems.HELL_BLADE_CHARM.getDefaultInstance());
                     SuperpositionHandler.setPersistentBoolean(player, "LootedHellCharm", true);
                 }
             }
-            if (isOver && player.getRandom().nextBoolean() && !SuperpositionHandler.hasPersistentTag(player, "LootedVoidTome")) {
+            if (isOver && player.getRandom().nextBoolean()) {
                 if (OmniconfigAddonHandler.isItemEnabled(EnigmaticAddonItems.VOID_TOME) && generatedLoot.stream().anyMatch(stack -> stack.is(EnigmaticAddonItems.FORGER_GEM))) {
                     generatedLoot.removeIf(stack -> stack.is(EnigmaticAddonItems.FORGER_GEM));
                     generatedLoot.add(EnigmaticAddonItems.VOID_TOME.getDefaultInstance());
